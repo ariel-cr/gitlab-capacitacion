@@ -1,0 +1,57 @@
+# Los tres servidores del laboratorio: dev, test y prod.
+#
+# Cada uno es un Ubuntu con SSH y nginx. No son contenedores de aplicación:
+# son SERVIDORES. Se entra por SSH, se mira dentro, se despliega copiando
+# archivos. Es el Tema 8 (los tres ambientes) y el Tema 9 (servidores)
+# hechos de verdad, cabiendo en un Mac.
+#
+#   ../scripts/preparar-ambientes.sh      genera la llave, construye y arranca
+#
+# Coste medido: 5 MB cada uno. Los tres, 15 MB.
+
+name: taller-servidores
+
+services:
+
+  dev:
+    build:
+      context: ../ambientes
+      args: { AMBIENTE: dev }
+    container_name: amb-dev
+    hostname: servidor-dev
+    restart: unless-stopped
+    ports:
+      - "8081:80"     # lo que ven los participantes en el navegador
+      - "2201:22"     # para entrar a mirar por SSH
+    networks: [taller]
+
+  test:
+    build:
+      context: ../ambientes
+      args: { AMBIENTE: test }
+    container_name: amb-test
+    hostname: servidor-test
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+      - "2202:22"
+    networks: [taller]
+
+  prod:
+    build:
+      context: ../ambientes
+      args: { AMBIENTE: prod }
+    container_name: amb-prod
+    hostname: servidor-prod
+    restart: unless-stopped
+    ports:
+      - "8083:80"
+      - "2203:22"
+    networks: [taller]
+
+# Red compartida con GitLab y el runner: el runner tiene que alcanzar a los
+# tres servidores por su nombre (amb-dev, amb-test, amb-prod) para desplegar.
+networks:
+  taller:
+    name: taller_default
+    external: true

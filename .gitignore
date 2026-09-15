@@ -1,0 +1,8 @@
+# La pareja de llaves de despliegue la genera preparar-ambientes.sh en cada
+# instalacion. NUNCA se versiona: es la credencial con la que el pipeline
+# entra a los tres servidores.
+.llaves/
+ambientes/llave.pub
+
+# Salidas
+paquete/
