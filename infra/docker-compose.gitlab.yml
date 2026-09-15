@@ -38,7 +38,9 @@ services:
         # se come 8 GB y tarda el doble en arrancar.
         prometheus_monitoring['enable'] = false
         alertmanager['enable'] = false
-        grafana['enable'] = false
+        # grafana: NO se pone. GitLab retiro el Grafana incorporado, y
+        # nombrarlo aqui hace fallar el arranque con
+        # 'Reading unsupported config value grafana'.
         gitlab_kas['enable'] = false
         registry['enable'] = false
         gitlab_rails['gitlab_default_projects_features_container_registry'] = false
