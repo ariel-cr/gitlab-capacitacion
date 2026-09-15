@@ -173,6 +173,7 @@ else
       --non-interactive --url "$URL" --token "$TOK_RUNNER" \
       --executor docker --docker-image alpine:3.20 \
       --docker-volumes /var/run/docker.sock:/var/run/docker.sock \
+      --docker-network-mode "${RED_TALLER:-taller_default}" \
       --docker-pull-policy if-not-present \
       --description "Runner del taller" >/dev/null 2>&1 \
       && { docker restart taller-runner >/dev/null; verde "registrado y arrancado"; } \
