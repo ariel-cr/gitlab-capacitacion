@@ -1,56 +1,80 @@
-# Los tres servidores del laboratorio: dev, test y prod.
+# Los tres servidores del laboratorio, más el registro de imágenes.
 #
-# Cada uno es un Ubuntu con SSH y nginx. No son contenedores de aplicación:
-# son SERVIDORES. Se entra por SSH, se mira dentro, se despliega copiando
-# archivos. Es el Tema 8 (los tres ambientes) y el Tema 9 (servidores)
-# hechos de verdad, cabiendo en un Mac.
+# Cada ambiente es un Ubuntu con SSH y su PROPIO Docker dentro. El pipeline
+# construye una imagen, la sube al registro, entra por SSH al servidor que
+# toque y levanta ahí el contenedor. Es lo que se hace contra un servidor de
+# verdad.
 #
-#   ../scripts/preparar-ambientes.sh      genera la llave, construye y arranca
+#   ../scripts/preparar-ambientes.sh            sin Kubernetes  (~28 MB c/u)
+#   CON_KUBERNETES=si ../scripts/preparar-ambientes.sh   con k3s (~400 MB c/u)
 #
-# Coste medido: 5 MB cada uno. Los tres, 15 MB.
+# --privileged es obligatorio: sin eso el Docker interno no arranca. En un
+# aula cerrada es aceptable; en producción no se hace.
 
 name: taller-servidores
 
+x-servidor: &servidor
+  build:
+    context: ../ambientes
+    args:
+      CON_KUBERNETES: ${CON_KUBERNETES:-no}
+  privileged: true
+  restart: unless-stopped
+  networks: [taller]
+
 services:
 
-  dev:
-    build:
-      context: ../ambientes
-      args: { AMBIENTE: dev }
-    container_name: amb-dev
-    hostname: servidor-dev
+  registro:
+    # Donde el pipeline deja las imágenes y de donde las bajan los servidores.
+    # Sin TLS: por eso los servidores lo declaran como registro inseguro.
+    image: registry:2
+    container_name: registro
+    hostname: registro
     restart: unless-stopped
-    ports:
-      - "8081:80"     # lo que ven los participantes en el navegador
-      - "2201:22"     # para entrar a mirar por SSH
+    ports: ["5000:5000"]
     networks: [taller]
 
-  test:
+  dev:
+    <<: *servidor
     build:
       context: ../ambientes
-      args: { AMBIENTE: test }
+      args:
+        AMBIENTE: dev
+        CON_KUBERNETES: ${CON_KUBERNETES:-no}
+    container_name: amb-dev
+    hostname: servidor-dev
+    ports:
+      - "8081:80"      # la aplicación desplegada
+      - "2201:22"      # SSH, para entrar a mirar
+
+  test:
+    <<: *servidor
+    build:
+      context: ../ambientes
+      args:
+        AMBIENTE: test
+        CON_KUBERNETES: ${CON_KUBERNETES:-no}
     container_name: amb-test
     hostname: servidor-test
-    restart: unless-stopped
     ports:
       - "8082:80"
       - "2202:22"
-    networks: [taller]
 
   prod:
+    <<: *servidor
     build:
       context: ../ambientes
-      args: { AMBIENTE: prod }
+      args:
+        AMBIENTE: prod
+        CON_KUBERNETES: ${CON_KUBERNETES:-no}
     container_name: amb-prod
     hostname: servidor-prod
-    restart: unless-stopped
     ports:
       - "8083:80"
       - "2203:22"
-    networks: [taller]
 
-# Red compartida con GitLab y el runner: el runner tiene que alcanzar a los
-# tres servidores por su nombre (amb-dev, amb-test, amb-prod) para desplegar.
+# La misma red que GitLab y el runner: el runner tiene que alcanzar a los
+# servidores por nombre (amb-dev, amb-test, amb-prod) y al registro.
 networks:
   taller:
     name: taller_default

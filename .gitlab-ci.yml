@@ -3,18 +3,27 @@
 # Las cuatro etapas son EXACTAMENTE las del Tema 8, diapositiva 23:
 #   1. Unit Test          · verificar la lógica antes de gastar tiempo compilando
 #   2. Análisis de código · calidad del código ya probado
-#   3. Build del paquete  · recién aquí se arma el artefacto
-#   4. Deploy al ambiente · sólo se instala lo que superó las tres anteriores
+#   3. Build del paquete  · recién aquí se construye la IMAGEN
+#   4. Deploy al ambiente · sólo se despliega lo que superó las tres anteriores
 #
 # Y las ramas son las del Tema 10, diapositiva 20:
+#   dev    → despliega en el servidor DEV    (automático)
+#   test   → despliega en el servidor TEST   (automático)
+#   master → despliega en PROD               (MANUAL, con botón)
 #
-#   rama dev    → despliega en el servidor DEV    (automático)
-#   rama test   → despliega en el servidor TEST   (automático)
-#   rama master → despliega en PROD               (MANUAL, con botón)
+# EL RECORRIDO COMPLETO DE UN CAMBIO
+# ──────────────────────────────────
+#   1. el alumno empuja a `dev`
+#   2. el runner construye una IMAGEN de Docker
+#   3. la sube al registro del taller
+#   4. entra por SSH al servidor del ambiente
+#   5. ese servidor BAJA la imagen del registro y levanta el contenedor
 #
-# El despliegue se hace copiando por SSH al servidor, que es como se
-# despliega de verdad. Requiere la variable SSH_PRIVADA (tipo File), que
-# imprime scripts/preparar-ambientes.sh
+# El paso 5 es el que importa: el contenedor corre en el Docker DEL SERVIDOR,
+# no en el del Mac. Cada ambiente despliega en su propia máquina.
+#
+# Variables que hay que crear en GitLab (Settings → CI/CD → Variables):
+#   SSH_PRIVADA   tipo File, sin Protect   ← la imprime preparar-ambientes.sh
 
 stages:
   - unit-test
@@ -23,6 +32,8 @@ stages:
   - deploy
 
 variables:
+  REGISTRO: "registro:5000"
+  IMAGEN: "registro:5000/demo-fttg"
   VERSION: "1.0.$CI_PIPELINE_IID"
 
 default:
@@ -55,34 +66,26 @@ analisis-de-codigo:
     - echo "Análisis superado"
 
 # ─────────────────────────────────────────────────────────── 3 · BUILD
-# El artefacto es el HTML ya resuelto para su ambiente. Se guarda como
-# artifact para que la etapa de deploy lo recoja: así se ve que build y
-# deploy son dos pasos distintos y que el segundo no vuelve a construir.
-construir:
+# Aquí se construye la imagen y se sube al registro. El runner usa el Docker
+# del Mac para construir; el registro es donde los servidores la irán a buscar.
+construir-imagen:
   stage: build
-  image: alpine:3.20
+  image: docker:27-cli
   script:
-    - echo "Armando el paquete para $AMBIENTE  ·  version $VERSION"
+    - echo "Construyendo $IMAGEN:$VERSION para el ambiente $AMBIENTE"
     - |
-      case "$AMBIENTE" in
-        dev)  COLOR="#0f5f3d"; TEXTO="#eafff5" ;;
-        test) COLOR="#8a5412"; TEXTO="#fff4e2" ;;
-        prod) COLOR="#123a63"; TEXTO="#e6f1ff" ;;
-      esac
-      mkdir -p paquete
-      sed -e "s|__AMBIENTE__|$AMBIENTE|g" \
-          -e "s|__VERSION__|$VERSION|g" \
-          -e "s|__COMMIT__|$CI_COMMIT_SHORT_SHA|g" \
-          -e "s|__RAMA__|$CI_COMMIT_REF_NAME|g" \
-          -e "s|__PIPELINE__|$CI_PIPELINE_IID|g" \
-          -e "s|__FECHA__|$(date -u '+%Y-%m-%d %H:%M UTC')|g" \
-          -e "s|__COLOR__|$COLOR|g" \
-          -e "s|__TEXTO__|$TEXTO|g" \
-          app/index.template.html > paquete/index.html
-    - echo "Paquete listo"; head -3 paquete/index.html
-  artifacts:
-    paths: [paquete/]
-    expire_in: 1 day
+      docker build \
+        --build-arg AMBIENTE="$AMBIENTE" \
+        --build-arg VERSION="$VERSION" \
+        --build-arg COMMIT="$CI_COMMIT_SHORT_SHA" \
+        --build-arg RAMA="$CI_COMMIT_REF_NAME" \
+        --build-arg PIPELINE="$CI_PIPELINE_IID" \
+        -t "$IMAGEN:$VERSION" \
+        -t "$IMAGEN:$AMBIENTE" \
+        app/
+    - docker push "$IMAGEN:$VERSION"
+    - docker push "$IMAGEN:$AMBIENTE"
+    - echo "Imagen publicada en el registro del taller"
   rules:
     - if: '$CI_COMMIT_BRANCH == "dev"'
       variables: { AMBIENTE: "dev" }
@@ -99,19 +102,33 @@ construir:
   image: alpine:3.20
   before_script:
     - apk add --no-cache openssh-client >/dev/null
-    # La llave llega como archivo, pero con permisos que SSH rechaza.
+    # La llave llega como archivo pero con permisos que SSH rechaza.
     - install -m 600 "$SSH_PRIVADA" /tmp/llave
+    - |
+      cat > /tmp/ssh <<'EOF'
+      #!/bin/sh
+      exec ssh -i /tmp/llave -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$@"
+      EOF
+      chmod +x /tmp/ssh
   script:
-    - echo "Desplegando la version $VERSION en el servidor $AMBIENTE"
-    # StrictHostKeyChecking=no porque los servidores se recrean en cada
-    # taller y su huella cambia. En producción esto NO se hace.
+    - echo "Desplegando $IMAGEN:$VERSION en el servidor $AMBIENTE"
+    # Todo lo que sigue ocurre DENTRO del servidor, en su propio Docker.
     - |
-      scp -i /tmp/llave -o StrictHostKeyChecking=no \
-          paquete/index.html "despliegue@amb-$AMBIENTE:/var/www/html/index.html"
-    - |
-      ssh -i /tmp/llave -o StrictHostKeyChecking=no "despliegue@amb-$AMBIENTE" \
-          "grep -o 'v[0-9.]*' /var/www/html/index.html | head -1"
-    - echo "Desplegado. Abra http://<IP-DEL-MAC>:$PUERTO"
+      /tmp/ssh "despliegue@amb-$AMBIENTE" "
+        set -e
+        echo '  bajando la imagen del registro…'
+        docker pull $IMAGEN:$VERSION
+        echo '  retirando la versión anterior…'
+        docker rm -f aplicacion 2>/dev/null || true
+        echo '  levantando la nueva…'
+        docker run -d --name aplicacion --restart unless-stopped \
+               -p 80:80 $IMAGEN:$VERSION
+        echo '  corriendo en el servidor:'
+        docker ps --filter name=aplicacion --format '    {{.Image}}  {{.Status}}'
+      "
+    - echo "Comprobando que responde…"
+    - /tmp/ssh "despliegue@amb-$AMBIENTE" "curl -sf -o /dev/null -w '  HTTP %{http_code}\n' http://localhost/"
+    - echo "Listo. Abra http://<IP-DEL-MAC>:$PUERTO"
 
 desplegar-dev:
   <<: *desplegar
@@ -134,7 +151,7 @@ desplegar-prod:
   rules:
     # La promoción a producción NO es automática: alguien tiene que pulsar.
     # Es la diferencia entre entrega continua y despliegue continuo, y aquí
-    # se ve como un botón en la interfaz.
+    # se ve como un botón en la interfaz de GitLab.
     - if: '$CI_COMMIT_BRANCH == "master"'
       when: manual
       allow_failure: false

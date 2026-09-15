@@ -1,64 +1,65 @@
-# Un "servidor" del laboratorio: Ubuntu con SSH y nginx.
+# Un SERVIDOR del laboratorio: Ubuntu con SSH, Docker y, opcionalmente, k3s.
 #
-# Cada ambiente —dev, test y prod— es un contenedor de estos. No son
-# contenedores de aplicación: son SERVIDORES. Se entra por SSH, se mira el
-# sistema de archivos, se reinicia el servicio. Exactamente lo que describe el
-# Tema 9, pero cabiendo en un Mac.
+# Cada ambiente —dev, test y prod— es una de estas máquinas. No es un
+# contenedor de aplicación: es un servidor completo. Se entra por SSH, tiene
+# su propio Docker, y el pipeline despliega ahí dentro contenedores, igual que
+# haría contra un servidor de verdad.
 #
-# El despliegue se hace copiando por SSH, que es como se despliega en un
-# servidor de verdad. No con `docker cp`, que sería el atajo y no enseñaría
-# nada.
+# Es lo que describen los temas 8 y 9: DEV tiene sus servidores, TEST los
+# suyos, PROD los suyos. Cada ambiente con su propio Docker.
+#
+# Coste medido en reposo:
+#   Ubuntu + sshd + nginx ............   5 MB
+#   + dockerd interno ................  23 MB
+#   + k3s (si se activa) ............. 369 MB
+#
+# Requiere arrancarse con --privileged para que el Docker interno funcione.
 
 FROM ubuntu:24.04
 
 ARG AMBIENTE=dev
+ARG CON_KUBERNETES=no
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV AMBIENTE=${AMBIENTE}
+ENV CON_KUBERNETES=${CON_KUBERNETES}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        openssh-server \
-        nginx \
-        ca-certificates \
-        curl \
-        vim-tiny \
-        less \
+        openssh-server ca-certificates curl vim-tiny less iproute2 \
+        docker.io \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /run/sshd /var/www/html
+    && mkdir -p /run/sshd
 
-# Usuario de despliegue. El pipeline entra como él; los participantes también,
-# para mirar. Sin contraseña: sólo con la llave que inyecta preparar-ambientes.
+# k3s sólo si se pide: son 369 MB por ambiente y no siempre hacen falta.
+RUN if [ "$CON_KUBERNETES" = "si" ]; then \
+      curl -sfL https://get.k3s.io -o /tmp/k3s.sh && \
+      INSTALL_K3S_SKIP_START=true INSTALL_K3S_SKIP_ENABLE=true sh /tmp/k3s.sh && \
+      rm -f /tmp/k3s.sh ; \
+    fi
+
+# Usuario de despliegue: por él entra el pipeline, y también los participantes
+# a mirar. Va en el grupo docker para poder manejar el Docker del servidor.
 RUN useradd -m -s /bin/bash despliegue \
+    && usermod -aG docker despliegue \
     && mkdir -p /home/despliegue/.ssh \
     && chmod 700 /home/despliegue/.ssh \
-    && chown -R despliegue:despliegue /home/despliegue/.ssh \
-    && chown -R despliegue:www-data /var/www/html \
-    && chmod 775 /var/www/html
+    && chown -R despliegue:despliegue /home/despliegue/.ssh
 
-# La llave pública del runner. La genera preparar-ambientes.sh y se copia al
-# contexto de build; así el pipeline puede entrar sin contraseña.
 COPY --chown=despliegue:despliegue llave.pub /home/despliegue/.ssh/authorized_keys
 RUN chmod 600 /home/despliegue/.ssh/authorized_keys
 
-# Sin contraseñas por SSH: sólo llave. Es lo correcto y además evita que
-# alguien entre por fuerza bruta en una red de aula.
+# Sólo llave, sin contraseñas. Es lo correcto y evita sorpresas en el aula.
 RUN sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config \
     && sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
 
-# Página inicial, para que el ambiente responda algo antes del primer
-# despliegue. Así se distingue "vacío" de "caído".
-RUN printf '<!doctype html><meta charset="utf-8">\
-<title>%s · sin desplegar</title>\
-<body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0;background:#2b2b2b;color:#ddd">\
-<div style="text-align:center">\
-<p style="font-size:14vw;font-weight:800;margin:0;text-transform:uppercase">%s</p>\
-<p style="font-size:2vw;opacity:.7">servidor en pie · todavia sin desplegar</p>\
-</div>' "$AMBIENTE" "$AMBIENTE" > /var/www/html/index.html
+# El registro del taller es local y sin TLS. Hay que declararlo como inseguro
+# o el Docker del servidor se niega a descargar de él.
+RUN mkdir -p /etc/docker \
+    && printf '{ "insecure-registries": ["registro:5000"] }\n' > /etc/docker/daemon.json
 
-# Arranca los dos servicios. Sin systemd: en un contenedor es más lío que
-# ayuda, y lo que se quiere enseñar es el despliegue, no init.
 COPY arrancar.sh /usr/local/bin/arrancar.sh
 RUN chmod +x /usr/local/bin/arrancar.sh
 
-EXPOSE 22 80
+# 22 SSH · 80 la aplicación desplegada · 6443 la API de Kubernetes
+EXPOSE 22 80 6443
 CMD ["/usr/local/bin/arrancar.sh"]
