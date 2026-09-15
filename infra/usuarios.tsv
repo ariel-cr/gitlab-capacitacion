@@ -1,0 +1,28 @@
+# Usuarios del taller. Se leen desde provisionar-gitlab.sh.
+#
+# Columnas, separadas por TABULADOR:
+#   usuario   nombre completo   rol
+#
+# Roles admitidos y qué significan en el taller:
+#
+#   developer   Rol Developer (nivel 30). Empuja a `dev`, abre Merge Requests
+#               y puede pulsar «Approve». NO puede fusionar a `test` ni a
+#               `master`, porque esas ramas están protegidas.
+#
+#   aprobador   Rol Maintainer (nivel 40). Además de todo lo anterior, es el
+#               único que puede FUSIONAR en `test` y en `master`. Es decir,
+#               quien ejecuta las dos promociones del Tema 8.
+#
+# Para cambiar la plantilla, edite este archivo y vuelva a correr el script:
+# los usuarios que ya existan se dejan como están.
+
+dev1	Ana Duenas	developer
+dev2	Bruno Castillo	developer
+dev3	Carla Mendoza	developer
+dev4	Diego Salazar	developer
+dev5	Elena Paredes	developer
+dev6	Fabian Rojas	developer
+apr1	Gabriela Vera	aprobador
+apr2	Hector Lozano	aprobador
+apr3	Irene Cabrera	aprobador
+apr4	Javier Montes	aprobador

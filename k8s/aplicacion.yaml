@@ -1,0 +1,95 @@
+# Manifiesto de la aplicación, uno solo para los tres ambientes.
+#
+# Los marcadores __IMAGEN__, __AMBIENTE__ y __VERSION__ los sustituye el
+# pipeline antes de aplicarlo. Es el mismo archivo el que se despliega en dev,
+# en test y en prod: lo único que cambia es el namespace y la etiqueta de la
+# imagen. Eso es, literalmente, lo que significa "promover" un cambio.
+#
+# El Ingress usa Traefik, que k3d (k3s) trae de serie — el mismo Ingress
+# Controller del Tema 11.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-fttg
+  labels:
+    app: demo-fttg
+    ambiente: __AMBIENTE__
+spec:
+  # DEV una sola copia; TEST y PROD dos, igual que el cuadro comparativo del
+  # Tema 8 (diapositiva 28): la réplica aparece cuando hay que simular carga.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-fttg
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0        # sin corte durante el despliegue
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: demo-fttg
+        ambiente: __AMBIENTE__
+        version: "__VERSION__"
+    spec:
+      containers:
+        - name: app
+          image: __IMAGEN__
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            # Topes pequeños a propósito: en un portátil caben los tres
+            # ambientes a la vez sin ahogar la máquina.
+            requests: { cpu: "10m",  memory: "16Mi" }
+            limits:   { cpu: "100m", memory: "64Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-fttg
+  labels:
+    app: demo-fttg
+spec:
+  selector:
+    app: demo-fttg
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-fttg
+  annotations:
+    # Traefik es el Ingress Controller que k3s instala por defecto.
+    # Es el mismo componente del Tema 11, diapositiva 15.
+    ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: traefik
+  rules:
+    # *.localhost lo resuelven Chrome, Edge y Firefox a 127.0.0.1 sin tocar el
+    # archivo hosts. Cada ambiente tiene su propio nombre, y los tres se pueden
+    # abrir a la vez en tres pestañas: eso es lo que hace visible la promoción.
+    - host: __AMBIENTE__.demo.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-fttg
+                port:
+                  number: 80

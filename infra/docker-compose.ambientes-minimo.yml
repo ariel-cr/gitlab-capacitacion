@@ -1,0 +1,61 @@
+# Los tres ambientes, PERFIL MÍNIMO. Para máquinas de oficina de 8 GB.
+#
+# Coste medido en reposo: 3 contenedores × 4,3 MB = ~13 MB.
+# El perfil completo (docker-compose.ambientes.yml) cuesta ~595 MB, casi todo
+# RabbitMQ (137 MB por instancia).
+#
+# Qué se quita y qué NO se pierde
+# ───────────────────────────────
+# Se quitan las bases de datos y los brokers. La aplicación de demostración no
+# los usa: estaban ahí para dibujar la arquitectura del Tema 8, no para que el
+# flujo funcione.
+#
+# El flujo —rama, Merge Request, pipeline, build, deploy, promoción— se aprende
+# igual con estos tres contenedores que con dieciséis. Lo que se pierde es la
+# comparación visual DEV/TEST/PROD del cuadro de la diapositiva 28, y eso se
+# recupera con una demostración de cinco minutos del capacitador en su
+# pantalla, con el perfil completo, UNA sola vez.
+#
+#   docker compose -f docker-compose.ambientes-minimo.yml up -d --build
+#
+#   DEV  → http://localhost:8081   (verde)
+#   TEST → http://localhost:8082   (ámbar)
+#   PROD → http://localhost:8083   (azul)
+
+name: taller-ambientes
+
+services:
+
+  dev-app:
+    build:
+      context: ../app
+      args: { AMBIENTE: dev, VERSION: "0.1.0", RAMA: dev, COMMIT: local }
+    ports: ["8081:80"]
+    restart: unless-stopped
+    networks: [dev]
+
+  test-app:
+    build:
+      context: ../app
+      args: { AMBIENTE: test, VERSION: "0.1.0", RAMA: test, COMMIT: local }
+    ports: ["8082:80"]
+    restart: unless-stopped
+    networks: [test]
+
+  prod-app:
+    build:
+      context: ../app
+      args: { AMBIENTE: prod, VERSION: "0.1.0", RAMA: master, COMMIT: local }
+    ports: ["8083:80"]
+    restart: unless-stopped
+    networks: [prod]
+
+# Las tres redes se mantienen aunque no haya bases de datos: la lección de que
+# un ambiente no alcanza a otro cuesta 0 MB y es de las que más se recuerdan.
+#
+#   docker compose -f docker-compose.ambientes-minimo.yml exec dev-app ping -c2 test-app
+#   → no resuelve, y esa es la idea
+networks:
+  dev:
+  test:
+  prod:

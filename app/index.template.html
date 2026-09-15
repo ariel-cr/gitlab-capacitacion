@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__AMBIENTE__ · Demo FTTG</title>
+<style>
+  :root{ --tinta:#0f1a19; --papel:#f4f7f6; }
+  *{box-sizing:border-box}
+  body{
+    margin:0; min-height:100vh; display:grid; place-items:center;
+    font-family:"Segoe UI",system-ui,-apple-system,sans-serif;
+    background:var(--fondo); color:var(--texto);
+    transition:background .4s ease;
+  }
+  .tarjeta{ text-align:center; padding:48px 56px; }
+  .ambiente{
+    font-size:clamp(56px,14vw,140px); font-weight:800; letter-spacing:-.04em;
+    line-height:.95; margin:0 0 8px; text-transform:uppercase;
+  }
+  .version{
+    font-family:"Cascadia Code",Consolas,monospace; font-size:clamp(20px,4vw,34px);
+    font-weight:600; margin:0 0 28px; opacity:.92;
+  }
+  dl{
+    display:grid; grid-template-columns:auto auto; gap:6px 22px;
+    justify-content:center; margin:0; font-size:14px; opacity:.85;
+  }
+  dt{ text-align:right; font-weight:600; letter-spacing:.06em; text-transform:uppercase; font-size:11px; align-self:center }
+  dd{ margin:0; text-align:left; font-family:"Cascadia Code",Consolas,monospace }
+  .sello{ margin-top:32px; font-size:12px; opacity:.6; letter-spacing:.1em; text-transform:uppercase }
+</style>
+</head>
+<body style="--fondo:__COLOR__; --texto:__TEXTO__">
+  <div class="tarjeta">
+    <p class="ambiente">__AMBIENTE__</p>
+    <p class="version">v__VERSION__</p>
+    <dl>
+      <dt>Commit</dt><dd>__COMMIT__</dd>
+      <dt>Rama</dt><dd>__RAMA__</dd>
+      <dt>Pipeline</dt><dd>#__PIPELINE__</dd>
+      <dt>Desplegado</dt><dd>__FECHA__</dd>
+    </dl>
+    <p class="sello">Capacitación DevOps · Fundación Terminal Terrestre de Guayaquil</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,139 @@
+# Pipeline del laboratorio.
+#
+# Las cuatro etapas son EXACTAMENTE las del Tema 8, diapositiva 23:
+#   1. Unit Test          · verificar la lógica antes de gastar tiempo compilando
+#   2. Análisis de código · calidad y seguridad del código ya probado
+#   3. Build del paquete  · recién aquí se compila
+#   4. Deploy al ambiente · sólo se instala lo que superó las tres anteriores
+#
+# Y las ramas son las del Tema 10, diapositiva 20: feature → dev → test → master.
+#
+#   rama dev    → despliega solo en el ambiente DEV   (automático)
+#   rama test   → despliega solo en el ambiente TEST  (automático)
+#   rama master → despliega en PROD                   (MANUAL, con botón)
+#
+# Ese `when: manual` de producción es el corazón de la clase: es el momento en
+# que alguien decide, y se ve el botón en la interfaz de GitLab.
+
+stages:
+  - unit-test
+  - analisis
+  - build
+  - deploy
+
+variables:
+  # El registro que crea k3d. Dentro del clúster se llama `taller-registry:5000`;
+  # desde el runner, por la red de Docker, el mismo nombre resuelve igual.
+  REGISTRO: "taller-registry:5000"
+  IMAGEN: "$REGISTRO/demo-fttg"
+  # La versión sale del pipeline, no se escribe a mano: así dos despliegues
+  # nunca comparten etiqueta y siempre se sabe qué está corriendo.
+  VERSION: "1.0.$CI_PIPELINE_IID"
+  DOCKER_BUILDKIT: "1"
+
+default:
+  tags:
+    - taller          # etiqueta con la que se registra el runner del alumno
+
+# ─────────────────────────────────────────────────────────── 1 · UNIT TEST
+pruebas-unitarias:
+  stage: unit-test
+  image: alpine:3.20
+  script:
+    - echo "Ejecutando pruebas sobre la plantilla de la aplicación"
+    - cd app && sh test.sh index.template.html
+
+# ─────────────────────────────────────────────────────────── 2 · ANÁLISIS
+analisis-de-codigo:
+  stage: analisis
+  image: hadolint/hadolint:latest-alpine
+  script:
+    # Linter del Dockerfile: es el análisis de código que corresponde a un
+    # proyecto cuyo artefacto ES una imagen.
+    - echo "Analizando el Dockerfile"
+    - hadolint app/Dockerfile --failure-threshold error
+  allow_failure: false
+
+verificar-manifiestos:
+  stage: analisis
+  image: alpine:3.20
+  script:
+    # Comprobación de que ningún manifiesto quedó con un valor de ejemplo.
+    - echo "Buscando marcadores sin sustituir en los manifiestos"
+    - |
+      if grep -rn "CAMBIAR-ESTO" k8s/ 2>/dev/null; then
+        echo "Hay manifiestos con valores de ejemplo sin rellenar"; exit 1
+      fi
+    - echo "Manifiestos limpios"
+
+# ─────────────────────────────────────────────────────────── 3 · BUILD
+construir-imagen:
+  stage: build
+  image: docker:27-cli
+  script:
+    - echo "Construyendo $IMAGEN:$VERSION para el ambiente $AMBIENTE_DESTINO"
+    - |
+      docker build \
+        --build-arg AMBIENTE="$AMBIENTE_DESTINO" \
+        --build-arg VERSION="$VERSION" \
+        --build-arg COMMIT="$CI_COMMIT_SHORT_SHA" \
+        --build-arg RAMA="$CI_COMMIT_REF_NAME" \
+        --build-arg PIPELINE="$CI_PIPELINE_IID" \
+        -t "$IMAGEN:$VERSION" \
+        -t "$IMAGEN:$AMBIENTE_DESTINO" \
+        app/
+    - docker push "$IMAGEN:$VERSION"
+    - docker push "$IMAGEN:$AMBIENTE_DESTINO"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+      variables: { AMBIENTE_DESTINO: "dev" }
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      variables: { AMBIENTE_DESTINO: "test" }
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      variables: { AMBIENTE_DESTINO: "prod" }
+
+# ─────────────────────────────────────────────────────────── 4 · DEPLOY
+.plantilla-deploy: &deploy
+  stage: deploy
+  image: bitnami/kubectl:1.31
+  script:
+    - echo "Desplegando $IMAGEN:$VERSION en el namespace $AMBIENTE"
+    - |
+      sed -e "s|__IMAGEN__|$IMAGEN:$VERSION|g" \
+          -e "s|__AMBIENTE__|$AMBIENTE|g" \
+          -e "s|__VERSION__|$VERSION|g" \
+          k8s/aplicacion.yaml > /tmp/manifiesto.yaml
+    - kubectl apply -n "$AMBIENTE" -f /tmp/manifiesto.yaml
+    - kubectl rollout status -n "$AMBIENTE" deployment/demo-fttg --timeout=120s
+    - echo "Listo. Abra http://$AMBIENTE.demo.localhost:8080"
+
+desplegar-dev:
+  <<: *deploy
+  variables: { AMBIENTE: "dev" }
+  environment:
+    name: dev
+    url: http://dev.demo.localhost:8080
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+
+desplegar-test:
+  <<: *deploy
+  variables: { AMBIENTE: "test" }
+  environment:
+    name: test
+    url: http://test.demo.localhost:8080
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+
+desplegar-prod:
+  <<: *deploy
+  variables: { AMBIENTE: "prod" }
+  environment:
+    name: prod
+    url: http://prod.demo.localhost:8080
+  rules:
+    # La promoción a producción NO es automática: alguien tiene que pulsar.
+    # Es la diferencia entre entrega continua y despliegue continuo, y se ve.
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      when: manual
+      allow_failure: false

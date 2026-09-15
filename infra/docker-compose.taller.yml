@@ -1,0 +1,84 @@
+# GitLab CE + GitLab Runner para el taller.
+#
+#   1. Ajuste IP_DEL_SERVIDOR abajo por la IP real de la máquina.
+#   2. docker compose -f docker-compose.taller.yml up -d
+#   3. Espere de 4 a 8 minutos (la primera vez).
+#   4. ../scripts/provisionar-gitlab.sh      ← crea grupo, proyecto y los 10 usuarios
+#
+# El runner arranca SIN registrar: el paso 4 lo registra. Hasta entonces se
+# queda dando vueltas sin trabajo, lo cual es correcto y no molesta.
+
+name: taller
+
+services:
+
+  gitlab:
+    # 19.3.2 publica amd64 Y arm64. Importa si el servidor es un Mac con chip
+    # Apple: antes de la 18.11 sólo había amd64, y emulado GitLab es inusable.
+    image: gitlab/gitlab-ce:19.3.2-ce.0
+    container_name: taller-gitlab
+    restart: unless-stopped
+    hostname: taller-gitlab
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        # La dirección por la que llegan los participantes. NO vale 'localhost':
+        # ellos vienen desde sus propios equipos. Si esto no coincide con lo que
+        # teclean, los enlaces de clonado y las redirecciones salen mal, y cuesta
+        # media hora darse cuenta.
+        external_url 'http://IP_DEL_SERVIDOR:8929'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2224
+
+        # Contraseña inicial de root. Cámbiela si el aula no es de confianza.
+        gitlab_rails['initial_root_password'] = 'TallerFTTG2026!'
+
+        # Los usuarios se crean desde el script, no se registran solos.
+        gitlab_rails['gitlab_signup_enabled'] = false
+
+        # Todo lo que no hace falta en un aula, apagado. Sin esto GitLab CE se
+        # come 8 GB y tarda el doble en arrancar.
+        prometheus_monitoring['enable'] = false
+        alertmanager['enable'] = false
+        grafana['enable'] = false
+        gitlab_kas['enable'] = false
+        registry['enable'] = false
+        gitlab_rails['gitlab_default_projects_features_container_registry'] = false
+        puma['worker_processes'] = 2
+        sidekiq['max_concurrency'] = 9
+
+        # Sin correo saliente: en un aula nadie confirma nada por email y los
+        # intentos de envío sólo llenan los registros de errores.
+        gitlab_rails['smtp_enable'] = false
+        gitlab_rails['gitlab_email_enabled'] = false
+    ports:
+      - "8929:8929"
+      - "2224:22"
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-datos:/var/opt/gitlab
+    shm_size: "256m"
+    healthcheck:
+      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail", "--max-time", "10"]
+      interval: 30s
+      timeout: 15s
+      retries: 30
+      start_period: 8m
+
+  runner:
+    image: gitlab/gitlab-runner:v17.5.3
+    container_name: taller-runner
+    restart: unless-stopped
+    depends_on:
+      - gitlab
+    volumes:
+      - runner-config:/etc/gitlab-runner
+      # Para que los trabajos puedan construir imágenes con el Docker del
+      # anfitrión, en vez de levantar un Docker dentro de otro.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Coste medido en reposo: 24 MB. Es la pieza más ligera de todo el taller.
+
+volumes:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-datos:
+  runner-config:

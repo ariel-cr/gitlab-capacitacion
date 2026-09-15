@@ -1,0 +1,69 @@
+# GitLab CE del aula. Se levanta UNA SOLA VEZ, en la máquina del capacitador
+# o en una máquina virtual de la red, y todos los alumnos se conectan a ella.
+#
+# Por qué no uno por alumno: GitLab CE pide 4 GB de RAM para arrancar y unos 8
+# para ir cómodo. Un portátil de 16 GB que además tiene que sostener Docker
+# Desktop, un clúster de Kubernetes y tres ambientes no da para eso. Con un
+# GitLab compartido, cada alumno gasta en su máquina sólo el clúster y su
+# runner, que es alrededor de 3 GB.
+#
+#   docker compose -f docker-compose.gitlab.yml up -d
+#
+# Tarda entre 4 y 8 minutos en responder la primera vez. Levántelo ANTES de
+# que llegue la gente.
+
+name: taller-gitlab
+
+services:
+  gitlab:
+    # 19.3.2 publica amd64 Y arm64. Importa si el servidor es un Mac con chip
+    # Apple: las versiones anteriores a la 18.11 sólo tienen amd64, y correrlas
+    # emuladas deja GitLab prácticamente inservible.
+    image: gitlab/gitlab-ce:19.3.2-ce.0
+    container_name: taller-gitlab
+    restart: unless-stopped
+    hostname: gitlab.taller.local
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        # La dirección por la que los ALUMNOS llegan. No sirve 'localhost':
+        # ellos vienen desde sus propios equipos.
+        #   · misma red  → la IP de la máquina en esa red
+        #   · fuera      → la dirección que dé el túnel de Cloudflare
+        # Si esto no coincide con lo que teclea el alumno, los enlaces de
+        # clonado y las redirecciones salen mal y cuesta media hora verlo.
+        external_url 'http://IP_DEL_SERVIDOR:8929'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2224
+
+        # Todo lo que no hace falta en un aula, apagado. Sin esto, GitLab CE
+        # se come 8 GB y tarda el doble en arrancar.
+        prometheus_monitoring['enable'] = false
+        alertmanager['enable'] = false
+        grafana['enable'] = false
+        gitlab_kas['enable'] = false
+        registry['enable'] = false
+        gitlab_rails['gitlab_default_projects_features_container_registry'] = false
+        puma['worker_processes'] = 2
+        sidekiq['max_concurrency'] = 9
+
+        # Que los alumnos puedan registrarse solos ahorra 15 minutos de alta
+        # manual. En un aula cerrada no hay problema.
+        gitlab_rails['gitlab_signup_enabled'] = true
+    ports:
+      - "8929:8929"     # interfaz web
+      - "2224:22"       # git por ssh
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-datos:/var/opt/gitlab
+    shm_size: "256m"
+    healthcheck:
+      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail", "--max-time", "10"]
+      interval: 30s
+      timeout: 15s
+      retries: 20
+      start_period: 8m
+
+volumes:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-datos:

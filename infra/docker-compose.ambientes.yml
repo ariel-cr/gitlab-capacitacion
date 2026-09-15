@@ -1,0 +1,145 @@
+# Los tres ambientes en Docker Compose. Es el ejercicio del DÍA 1.
+#
+# El día 2 estos mismos tres ambientes se rehacen sobre Kubernetes. Hacerlo dos
+# veces no es repetir: es exactamente la comparación que hace falta para
+# entender qué añade Kubernetes y qué no. Con Compose los tres ambientes son
+# tres grupos de contenedores en una máquina; con Kubernetes son tres
+# namespaces en un clúster, con su propio balanceo y su propia puerta de
+# entrada.
+#
+#   docker compose -f docker-compose.ambientes.yml up -d
+#   docker compose -f docker-compose.ambientes.yml ps
+#   docker compose -f docker-compose.ambientes.yml down
+#
+# Cada ambiente crece respecto al anterior siguiendo el cuadro del Tema 8,
+# diapositiva 28: DEV es lo mínimo; TEST añade la réplica de lectura; PROD
+# mantiene todo y es donde vive el pipeline.
+
+name: taller-ambientes
+
+x-app-comun: &app-comun
+  build:
+    context: ../app
+  restart: unless-stopped
+
+services:
+
+  # ─────────────────────────────────────────────── DEV · lo mínimo
+  # Un nodo de base de datos, un nodo de aplicación, el broker. Sin réplica y
+  # sin gateway: para programar alcanza.
+  dev-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: taller
+      POSTGRES_DB: demo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      retries: 5
+    networks: [dev]
+
+  dev-broker:
+    image: rabbitmq:3.13-management-alpine
+    ports: ["15673:15672"]     # consola de RabbitMQ del ambiente DEV
+    networks: [dev]
+
+  dev-app:
+    <<: *app-comun
+    build:
+      context: ../app
+      args: { AMBIENTE: dev, VERSION: "0.1.0", RAMA: dev, COMMIT: local }
+    ports: ["8081:80"]
+    depends_on:
+      dev-db: { condition: service_healthy }
+    networks: [dev]
+
+  # ─────────────────────────────────────────── TEST · aparece la réplica
+  test-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: taller
+      POSTGRES_DB: demo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      retries: 5
+    networks: [test]
+
+  # La novedad frente a DEV: una segunda copia que atiende lecturas mientras
+  # la principal atiende escrituras.
+  test-db-replica:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: taller
+      POSTGRES_DB: demo
+    networks: [test]
+
+  test-broker:
+    image: rabbitmq:3.13-management-alpine
+    ports: ["15674:15672"]
+    networks: [test]
+
+  test-app:
+    <<: *app-comun
+    build:
+      context: ../app
+      args: { AMBIENTE: test, VERSION: "0.1.0", RAMA: test, COMMIT: local }
+    ports: ["8082:80"]
+    depends_on:
+      test-db: { condition: service_healthy }
+    networks: [test]
+
+  # La otra novedad de TEST: una puerta de entrada controlada. En el proyecto
+  # real es WSO2; aquí basta un proxy que cumpla el mismo papel.
+  test-gateway:
+    image: nginx:1.27-alpine
+    ports: ["8092:80"]
+    networks: [test]
+
+  # ──────────────────────────────── PROD · todo lo anterior, y es donde manda
+  prod-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: taller
+      POSTGRES_DB: demo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      retries: 5
+    networks: [prod]
+
+  prod-db-replica:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: taller
+      POSTGRES_DB: demo
+    networks: [prod]
+
+  prod-broker:
+    image: rabbitmq:3.13-management-alpine
+    ports: ["15675:15672"]
+    networks: [prod]
+
+  prod-app:
+    <<: *app-comun
+    build:
+      context: ../app
+      args: { AMBIENTE: prod, VERSION: "0.1.0", RAMA: master, COMMIT: local }
+    ports: ["8083:80"]
+    depends_on:
+      prod-db: { condition: service_healthy }
+    networks: [prod]
+
+  prod-gateway:
+    image: nginx:1.27-alpine
+    ports: ["8093:80"]
+    networks: [prod]
+
+# Tres redes separadas. Es el punto que conviene hacer notar: un contenedor de
+# DEV no puede hablar con la base de datos de PROD aunque quiera, porque no
+# comparten red. El aislamiento entre ambientes no es una convención de
+# nombres, es una frontera real.
+networks:
+  dev:
+  test:
+  prod:
